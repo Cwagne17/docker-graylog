@@ -1,0 +1,1 @@
+# Single Graylog Node Docker Compose Script

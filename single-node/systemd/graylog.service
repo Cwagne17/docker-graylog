@@ -1,0 +1,15 @@
+# /etc/systemd/system/graylog.service
+
+[Unit]
+Description=Graylog Docker Compose
+Requires=docker.service
+After=docker.service
+
+[Service]
+Restart=always
+ExecStart=/usr/local/bin/docker compose -f /opt/graylog/docker-compose.yml up -d
+ExecStop=/usr/local/bin/docker compose -f /opt/graylog/docker-compose.yml down
+WorkingDirectory=/opt/graylog
+
+[Install]
+WantedBy=multi-user.target
