@@ -1,6 +1,26 @@
+<!-- omit in toc -->
 # Operating Manual
 
 This file describes the specifications for the graylog environment and a tutorial to building the environment.
+
+<!-- omit in toc -->
+## Table of Contents
+
+- [ProxMox Configuration](#proxmox-configuration)
+- [Network Configuration](#network-configuration)
+- [APT Configuration](#apt-configuration)
+- [Docker Installation](#docker-installation)
+  - [Recommended Docker Engine Configuration](#recommended-docker-engine-configuration)
+  - [Additional Docker Engine Configuration](#additional-docker-engine-configuration)
+- [Docker Image Configuration](#docker-image-configuration)
+- [Docker Deployment](#docker-deployment)
+- [Systemd Configuration](#systemd-configuration)
+  - [Systemd Service Logs](#systemd-service-logs)
+    - [Viewing Logs with Journalctl](#viewing-logs-with-journalctl)
+    - [Viewing Logs with Docker Compose](#viewing-logs-with-docker-compose)
+  - [Runtime Errors](#runtime-errors)
+    - [No space left on device](#no-space-left-on-device)
+- [References](#references)
 
 ## ProxMox Configuration
 
@@ -55,7 +75,7 @@ This file describes the specifications for the graylog environment and a tutoria
 | <b>figure 6. Prox Mox Network Tab</b> |
 
 9. Confirm Tab
-   1.  Select the `Finish` button at the bottom right
+   1. Select the `Finish` button at the bottom right
 
 ## Network Configuration
 
@@ -255,17 +275,17 @@ $ mkdir /opt/graylog
 ```yaml
 # /opt/graylog/docker-compose.yml
 
-version: '3'
+version: '3.8'
 services:
-  # MongoDB: https://hub.docker.com/_/mongo/
   mongo:
     image: mongo:6.0.4
     ports:
       - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
     networks:
       - graylog
 
-  # Elasticsearch: https://www.elastic.co/guide/en/elasticsearch/reference/7.10/docker.html
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch-oss:7.10.2
     environment:
@@ -275,45 +295,64 @@ services:
       - "ES_JAVA_OPTS=-Dlog4j2.formatMsgNoLookups=true -Xms512m -Xmx512m"
     ports:
       - 9200:9200
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    deploy:
-      resources:
-        limits:
-          memory: 1g
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
     networks:
       - graylog
 
-  # Graylog: https://hub.docker.com/r/graylog/graylog/
   graylog:
-    image: graylog/graylog:5.0
-    environment:
-      # CHANGE ME (must be at least 16 characters)!
-      - GRAYLOG_PASSWORD_SECRET=somepasswordpepper
-      # Password: admin
-      - GRAYLOG_ROOT_PASSWORD_SHA2=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
-      - GRAYLOG_HTTP_EXTERNAL_URI=http://127.0.0.1:9000/
-    entrypoint: /usr/bin/tini -- wait-for-it elasticsearch:9200 -- /docker-entrypoint.sh
-    networks:
-      - graylog
-    restart: always
     depends_on:
       - mongo
       - elasticsearch
-    ports:
-      # Graylog web interface and REST API
-      - 9000:9000
-      # Syslog TCP
-      #- 1514:1514
-      # Syslog UDP
-      - 514:514/udp
-      # GELF TCP
-      - 12201:12201
-      # GELF UDP
-      - 12201:12201/udp
+    image: graylog/graylog:5.0
+    environment:
+      # Refer to server.conf for all available options
+      # https://go2docs.graylog.org/5-0/setting_up_graylog/server.conf.html
+      
+      # General
+      ## Recommend changing this to a unique value
+      - GRAYLOG_PASSWORD_SECRET=somepasswordpepper
+      - GRAYLOG_ROOT_USERNAME=admin
+      ## Password: admin
+      ### Change this password in production!
+      ### Use https://www.scopulus.co.uk/tools/passwordmastersha2.htm or another tool to generate a SHA2 hash
+      - GRAYLOG_ROOT_PASSWORD_SHA2=8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+      # Web & REST API
+      ## Recommend! Enabling HTTPS
+      - GRAYLOG_HTTP_EXTERNAL_URI=http://127.0.0.1:9000/
 
+      # Using Defaults for the following options:
+      ## Elasticsearch
+      ## Rotation
+      ## MongoDB
+      ## Email
+      ## HTTP
+      ## Processing Status
+      ## Script Alert Notification
+      ## Others
+    entrypoint: /usr/bin/tini -- wait-for-it elasticsearch:9200 -- /docker-entrypoint.sh
+    restart: always
+    ports:
+      - 9000:9000 # Web Interface
+      - 514:514 # Syslog TCP
+      - 514:514/udp # Syslog UDP
+      - 12201:12201 # GELF TCP
+      - 12201:12201/udp # GELF UDP
+    volumes:
+      - graylog_data:/usr/share/graylog/data
+    networks:
+      - graylog
+
+# Defines Docker volumes for the Graylog stack to persist data between restarts
+volumes:
+  mongo_data:
+    driver: local
+  es_data:
+    driver: local
+  graylog_data:
+    driver: local
+
+# Define the networks used by the Graylog stack
 networks:
   graylog:
     driver: bridge
@@ -351,28 +390,99 @@ After=docker.service
 
 [Service]
 Restart=always
-ExecStart=/usr/local/bin/docker compose -f /opt/graylog/docker-compose.yml up -d
-ExecStop=/usr/local/bin/docker compose -f /opt/graylog/docker-compose.yml down
+ExecStart=/usr/bin/docker compose -f /opt/graylog/docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f /opt/graylog/docker-compose.yml down
 WorkingDirectory=/opt/graylog
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-2. Enable the Systemd Service
+2. Reload the Systemd Daemon
+
+```bash
+$ systemctl daemon-reload
+```
+
+3. Enable the Systemd Service
 
 ```bash
 $ systemctl enable graylog
 ```
 
-3. Start the Systemd Service
+4. Start the Systemd Service
 
 ```bash
 $ systemctl start graylog
 ```
 
-4. Verify the Systemd Service
+5. Verify the Systemd Service
 
 ```bash
 $ systemctl status graylog
 ```
+
+### Systemd Service Logs
+
+#### Viewing Logs with Journalctl
+
+The journalctl command can be used to view the logs for a specific systemd service. The downside of using journalctl is that all the docker service logs are combined into one log. This can make it difficult to troubleshoot a specific docker compose service.
+
+```bash
+$ journalctl -u graylog -f
+```
+
+#### Viewing Logs with Docker Compose
+
+The service name can be specified in the docker compose logs command to only view the logs for a specific service. This is useful when troubleshooting a specific service. (Also output is colorized)
+
+The service name can be found in the docker-compose.yml file.
+
+Example:
+
+```bash
+$ docker compose -f /opt/graylog/docker-compose.yml logs -ft graylog
+```
+
+### Runtime Errors
+
+#### No space left on device
+
+If at somepoint it is noticed that no docker images are running and everytime the docker compose script is run (aka. the graylog.service is restarted), the following error is displayed: `no space left on device`, then the following steps should be taken.
+
+| <img src="../assets/systemd-error-no-space-left-on-device.png" width="700px"> |
+|:--:|
+| <b>figure x. Systemd Error, "no space left on device"</b> |
+
+The error is a result not of the host machine running out of disk space, but rather the docker daemon running out of disk space.
+
+1. Identify the disk usage for the docker daemon (use `-v` for verbose output)
+
+```bash
+$ docker system df
+TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
+Images          3         3         1.826GB   77.81MB (4%)
+Containers      3         1         134.3MB   0B (0%)
+Local Volumes   492       3         17.68GB   17.68GB (99%)
+Build Cache     0         0         0B        0B
+```
+
+As you can see in the example, the docker daemon is using 99% of the disk space with local volumes.
+
+2. Remove the local volumes
+
+```bash
+$ docker volume prune
+
+# if that doesn't work you can also try
+$ docker volume rm $(docker volume ls -qf dangling=true)
+```
+
+This will remove all local volumes that are not in use by a container.
+
+## References
+
+[DockerHub Graylog Image](https://hub.docker.com/r/graylog/graylog)
+[DockerHub MongoDB Image](https://hub.docker.com/_/mongo)
+[DockerHub Elasticsearch Image](https://www.docker.elastic.co/r/elasticsearch)
+[Graylog 5.0 Documentation](https://go2docs.graylog.org/5-0/what_is_graylog/what_is_graylog.htm)

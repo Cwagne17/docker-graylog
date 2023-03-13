@@ -2,13 +2,13 @@
 
 [Unit]
 Description=Graylog Docker Compose
-Requires=docker.service
-After=docker.service
+Requires=docker.service containerd.service
+After=docker.service containerd.service
 
 [Service]
 Restart=always
-ExecStart=/usr/local/bin/docker compose -f /opt/graylog/docker-compose.yml up -d
-ExecStop=/usr/local/bin/docker compose -f /opt/graylog/docker-compose.yml down
+ExecStart=/usr/bin/docker compose -f /opt/graylog/docker-compose.yml up -d
+ExecStop=/usr/bin/docker compose -f /opt/graylog/docker-compose.yml down
 WorkingDirectory=/opt/graylog
 
 [Install]
